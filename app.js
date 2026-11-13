@@ -121,7 +121,7 @@ function editView(id) {
     clear(box);
     rns.forEach((r, i) => {
       const n = h("input", { type: "text", value: r.name, placeholder: "領収書名（宛名）" }), y = h("input", { type: "text", value: r.yomi || "", placeholder: "フリガナ（自動入力・修正可）" });
-      n.oninput = () => (r.name = n.value); y.oninput = () => (r.yomi = y.value); autoKana(n, y);
+      n.oninput = () => { r.name = n.value; r.auto = false; }; y.oninput = () => (r.yomi = y.value); autoKana(n, y);
       const t = h("select", { onchange: () => (r.type = t.value) }, [["unknown", "法人/個人 未設定"], ["corporate", "法人"], ["individual", "個人"]].map(([v, l]) => h("option", { value: v, selected: (r.type || "unknown") === v }, l)));
       const p = h("input", { type: "checkbox", checked: !!r.primary, onchange: () => { rns.forEach((x) => (x.primary = false)); r.primary = p.checked; draw(); } });
       box.append(h("div", { class: "rn-row" }, n, y, t, h("div", { class: "row sp" }, h("label", {}, p, " 標準の宛名にする"), h("button", { class: "btn bad sm", onclick: () => { rns.splice(i, 1); draw(); } }, "この宛名を外す"))));
@@ -179,8 +179,14 @@ function editView(id) {
       retired.length ? h("div", {}, h("div", { class: "mute" }, "変更履歴"), retired.map((r) => h("div", { class: "hist" }, `${r.name}（〜${r.retiredAt}）`))) : null),
     lines("aliases", "ニックネーム"), text("company", "会社名"), text("industry", "職業・業種"), area("features", "特徴", "例: いつも黒いスーツ"), lines("keywords", "検索キーワード"), area("memo", "メモ"),
     h("div", {}, h("label", {}, "最終確認日"), (f.lastConfirmed = h("input", { type: "date", value: c.lastConfirmed || "" }))),
+    h("div", { class: "mute" }, "※ 領収書名が未登録のとき、会社名を入力すると領収書名に自動で入ります（修正可）"),
     h("div", { class: "row" }, saveBtn, h("button", { class: "btn sub", onclick: () => { SUB = ""; render(); } }, "戻る"),
       id ? h("button", { class: "btn bad", onclick: async () => { if (!confirm("この顧客を削除しますか？（ごみ箱から復元できます）")) return; src.deleted = true; src.updatedAt = Date.now(); await db.put(src); toast("削除しました"); SUB = ""; render(); } }, "削除") : null));
+  f.company.addEventListener("input", () => { // 会社名 → 領収書名(未登録、または自動入力のままの間だけ連動)
+    const v = f.company.value.trim(), a = rns.find((r) => r.auto);
+    if (!a && rns.length === 0 && v) { rns.push({ id: -Date.now(), name: v, yomi: "", type: "corporate", primary: false, auto: true }); draw(); }
+    else if (a) { a.name = v; if (!v) rns.splice(rns.indexOf(a), 1); draw(); }
+  });
 }
 
 // ---------- 取込 ----------

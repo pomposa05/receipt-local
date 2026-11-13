@@ -106,6 +106,7 @@ export function parseLine(line) {
     if (!p.call) p.call = seg; else if (INDUSTRY.test(seg) && !p.industry) p.industry = seg; else feats.push(seg);
   }
   p.features = feats.join("、");
+  if (!p.receipts.length && p.company) { p.receipts.push({ id: 1, name: p.company, yomi: "", type: "corporate", primary: false }); warns.push("領収書名の指定がないため、会社名を領収書名にしました（違う場合は修正してください）"); }
   if (!p.call) warns.push("呼び名を読み取れませんでした");
   if (!p.receipts.length) warns.push("領収書名が見つかりません（登録後は「領収書名未登録」になります）");
   return { p, warns };
@@ -133,6 +134,7 @@ export function parseCSV(text) {
     const g = (k) => ((k in col ? r[col[k]] : "") || "").trim(), p = emptyDraft(), warns = [];
     Object.assign(p, { call: g("call"), real: g("real"), realYomi: g("realYomi"), callYomi: g("callYomi"), company: g("company"), industry: g("industry"), features: g("features"), memo: g("memo"), lastConfirmed: g("lastConfirmed").slice(0, 10), aliases: multi(g("aliases")), keywords: multi(g("keywords")) });
     if (g("receipt")) p.receipts.push({ id: 1, name: g("receipt"), yomi: g("receiptYomi"), type: "unknown", primary: false });
+    if (!p.receipts.length && p.company) { p.receipts.push({ id: 1, name: p.company, yomi: "", type: "corporate", primary: false }); warns.push("領収書名が空のため、会社名を領収書名にしました"); }
     if (!p.call) warns.push("呼び名が空です"); if (!p.receipts.length) warns.push("領収書名が空です");
     return { raw: r.join(" / "), p, warns };
   });
