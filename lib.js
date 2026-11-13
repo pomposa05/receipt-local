@@ -95,14 +95,20 @@ const REC = /^(?:領収書|領収証|宛名|宛先)\s*(?:名)?\s*(?:は|が|:|�
 const LABELS = [["real", /^(?:本名|氏名|フルネーム)\s*(?:は|:|：)?\s*(.+)$/], ["alias", /^(?:呼び名|通称|あだ名|愛称|ニックネーム|別名)\s*(?:は|:|：)?\s*(.+)$/], ["company", /^(?:会社名?|勤務先|社名)\s*(?:は|:|：)?\s*(.+)$/], ["industry", /^(?:職業|業種)\s*(?:は|:|：)?\s*(.+)$/]];
 const INDUSTRY = /(業|社長|経営|医師|医者|弁護士|会計士|税理士|教師|先生|議員|職人|自営|会社員|公務員|フリーランス)$/;
 export const emptyDraft = () => ({ call: "", callYomi: "", real: "", realYomi: "", aliases: [], keywords: [], company: "", industry: "", features: "", memo: "", lastConfirmed: "", receipts: [] });
+// 会社名らしい文字列（法人格 or 会社らしい語尾）。ラベルなしでも会社名として拾う
+const CORP = /(?:株式会社|有限会社|合同会社|合資会社|一般社団法人|一般財団法人|医療法人|社会福祉法人|学校法人|宗教法人|特定非営利活動法人|NPO法人|[(（]株[)）]|[(（]有[)）]|㈱|㈲)|(?:商事|商会|商店|物産|工業|建設|産業|運輸|製作所|工務店|ホールディングス|グループ|カンパニー|コーポレーション|\b(?:Inc|Co\.?,?\s*Ltd|Corp)\b)$/i;
 export function parseLine(line) {
   const p = emptyDraft(), warns = [], feats = [];
-  for (const seg of line.split(SPLIT).map((s) => s.trim()).filter(Boolean)) {
+  for (let seg of line.split(SPLIT).map((s) => s.trim()).filter(Boolean)) {
     let m = seg.match(REC);
     if (m) { const name = m[1].trim().replace(/(?:でお願いします|です|で|宛て?)$/, ""); if (name) p.receipts.push({ id: p.receipts.length + 1, name, yomi: "", type: "unknown", primary: false }); continue; }
     let hit = false;
     for (const [k, rx] of LABELS) { m = seg.match(rx); if (m) { const v = m[1].trim(); k === "alias" ? p.aliases.push(v) : (p[k] = v); hit = true; break; } }
     if (hit) continue;
+    if (!p.company) { // 空白区切りでも会社名らしい語を拾う（例: 「山田 有限会社サトウ食品 飲食業」）
+      const toks = seg.split(/[\s　]+/), i = toks.findIndex((t) => CORP.test(t) && t.length <= 40);
+      if (i >= 0) { p.company = toks[i].replace(/(?:です|でお願いします|の人|の方)$/, ""); toks.splice(i, 1); seg = toks.join(" "); if (!seg) continue; }
+    }
     if (!p.call) p.call = seg; else if (INDUSTRY.test(seg) && !p.industry) p.industry = seg; else feats.push(seg);
   }
   p.features = feats.join("、");
