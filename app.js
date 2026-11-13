@@ -1,4 +1,4 @@
-import { norm, search, activeReceipts, findDuplicates, scanDuplicates, parseText, parseCSV, emptyDraft, csvCell, csvSafe } from "./lib.js";
+import { norm, search, activeReceipts, findDuplicates, scanDuplicates, parseText, parseLine, parseCSV, emptyDraft, csvCell, csvSafe } from "./lib.js";
 import * as db from "./db.js";
 
 const $app = document.getElementById("app");
@@ -16,15 +16,22 @@ function h(tag, a, ...kids) {
 }
 const clear = (e) => e.replaceChildren();
 function toast(m, bad) { const t = document.getElementById("toast"); t.textContent = m; t.className = "show" + (bad ? " bad" : ""); clearTimeout(toast.t); toast.t = setTimeout(() => (t.className = ""), 2200); }
-async function copy(text) {
+async function copy(text, label) {
   try { await navigator.clipboard.writeText(text); }
   catch (e) {
     const ta = h("textarea", { style: "position:fixed;opacity:0" }); ta.value = text; document.body.append(ta); ta.select();
     let ok = false; try { ok = document.execCommand("copy"); } catch (x) {} ta.remove();
     if (!ok) return toast("コピーできません。長押しで選択してください：" + text, true);
   }
-  toast("コピーしました：" + text);
+  toast("コピーしました：" + (label || text));
 }
+
+// クリップボードの文字を貼り付け(1タップ)。許可されない端末では欄を長押しして貼り付ける
+async function pasteInto(el) {
+  try { const t = await navigator.clipboard.readText(); if (!t) return toast("クリップボードが空です", true); el.value = t; el.dispatchEvent(new Event("input")); toast("貼り付けました"); }
+  catch (e) { el.focus(); toast("自動で貼り付けできません。欄を長押しして「ペースト」してください", true); }
+}
+const pasteBtn = (el) => h("button", { class: "btn sub sm", onclick: () => pasteInto(el) }, "貼り付け");
 async function reload() { LIST = await db.all(); }
 const live = () => LIST.filter((c) => !c.deleted);
 
@@ -121,6 +128,23 @@ function editView(id) {
     });
   };
   draw();
+  const fillBox = h("div"); let pasteCard = null;
+  if (!id) {
+    const pt = h("textarea", { placeholder: "例: 田中さん、建設業、いつも黒いスーツ、領収書はABC商事" });
+    const fill = () => {
+      const line = pt.value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0]; clear(fillBox);
+      if (!line) return toast("文章を入力または貼り付けてください", true);
+      const { p, warns } = parseLine(line);
+      if (p.call) f.call.value = p.call; if (p.real) f.real.value = p.real; if (p.industry) f.industry.value = p.industry; if (p.company) f.company.value = p.company;
+      if (p.features) f.features.value = p.features;
+      if (p.aliases.length) f.aliases.value = [f.aliases.value, ...p.aliases].filter(Boolean).join("\n");
+      p.receipts.forEach((r) => { if (!rns.some((x) => norm(x.name) === norm(r.name))) rns.push({ id: -Date.now() - rns.length, name: r.name, yomi: "", type: "unknown", primary: false }); }); draw();
+      fillBox.append(h("div", { class: "banner ok" }, "下の欄に入力しました。内容を確認・修正して保存してください。"), ...warns.map((w) => h("div", { class: "banner warn" }, w)),
+        pt.value.split(/\r?\n/).filter((l) => l.trim()).length > 1 ? h("div", { class: "banner info" }, "複数行は先頭の1行だけ入力しました。まとめて登録するには「取込」を使ってください。") : null);
+    };
+    pasteCard = h("div", { class: "card" }, h("b", {}, "文章から入力"), h("div", { class: "mute" }, "メモなどの文章を貼り付けると、項目に自動で振り分けます"), pt,
+      h("div", { class: "row" }, pasteBtn(pt), h("button", { class: "btn sub sm", onclick: fill }, "項目に入力")), fillBox);
+  }
   const call = text("call", "呼び名（必須）", "例: 田中さん"), callY = text("callYomi", "呼び名のフリガナ（自動入力・修正可）"), real = text("real", "本名"), realY = text("realYomi", "本名のフリガナ（自動入力・修正可）");
   autoKana(f.call, f.callYomi); autoKana(f.real, f.realYomi);
   let confirmed = false;
@@ -150,7 +174,7 @@ function editView(id) {
     await reload(); toast("保存しました"); SUB = ""; render();
   };
   const saveBtn = h("button", { class: "btn grow", onclick: save }, "保存");
-  shell(h("h3", {}, id ? "顧客を編集" : "顧客を追加"), msg, call, callY, real, realY,
+  shell(h("h3", {}, id ? "顧客を編集" : "顧客を追加"), msg, pasteCard, call, callY, real, realY,
     h("div", { class: "card" }, h("b", {}, "領収書名"), box, h("button", { class: "btn sub sm", onclick: () => { rns.push({ id: -Date.now(), name: "", yomi: "", type: "unknown", primary: false }); draw(); } }, "＋ 宛名を追加"),
       retired.length ? h("div", {}, h("div", { class: "mute" }, "変更履歴"), retired.map((r) => h("div", { class: "hist" }, `${r.name}（〜${r.retiredAt}）`))) : null),
     lines("aliases", "ニックネーム"), text("company", "会社名"), text("industry", "職業・業種"), area("features", "特徴", "例: いつも黒いスーツ"), lines("keywords", "検索キーワード"), area("memo", "メモ"),
@@ -196,6 +220,7 @@ function importView() {
   };
   const guard = (fn) => async () => { try { const r = await fn(); if (!r.length) throw new Error("取り込めるデータがありませんでした"); show(r); } catch (e) { toast(e.message, true); } };
   shell(h("h3", {}, "データ取込"), h("div", { class: "banner info" }, "文章の貼り付け・CSV・テキストに対応。登録前に必ず確認画面が出ます。（写真のOCRとExcelは、このアプリでは未対応です）"), ta,
+    h("div", { class: "row" }, pasteBtn(ta), h("button", { class: "btn sub sm", onclick: () => { ta.value = ""; } }, "クリア")), h("div", { style: "height:8px" }),
     h("button", { class: "btn w", onclick: guard(async () => parseText(ta.value)) }, "貼り付けた内容を解析"), h("hr"),
     h("label", {}, "CSV・テキスト（CSVは1行目に「呼び名」「領収書名」などの見出し）"), file, h("div", { style: "height:8px" }),
     h("button", { class: "btn sub w", onclick: guard(async () => {
@@ -218,9 +243,13 @@ async function settingsView() {
     const rows = live().map((c) => [c.call, c.real, c.realYomi, c.aliases.join("；"), activeReceipts(c).map((r) => r.name).join("；"), activeReceipts(c).map((r) => r.yomi).join("；"), c.company, c.industry, c.features, c.keywords.join("；"), c.memo, c.lastConfirmed || ""]);
     download(`customers-${today()}.csv`, "text/csv;charset=utf-8", "﻿" + [head, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n")); toast("CSVを書き出しました");
   };
-  const restore = async (mode) => {
-    const f = file.files[0]; if (!f) return toast("バックアップファイルを選択してください", true);
-    let d; try { d = JSON.parse(await f.text()); if (d.app !== "receipt-local" || !Array.isArray(d.customers)) throw 0; } catch (e) { return toast("このアプリのバックアップファイルではありません", true); }
+  const backupText = JSON.stringify({ app: "receipt-local", version: 1, exportedAt: new Date().toISOString(), customers: LIST });
+  const copyBackup = async () => { await copy(backupText, `バックアップ（${live().length}件）`); await db.setMeta("lastBackup", Date.now()); };
+  const tbox = h("textarea", { placeholder: "コピーしたバックアップの文字をここに貼り付け" });
+  const restore = async (mode, fromText) => {
+    let raw; if (fromText) raw = tbox.value.trim(); else { const f = file.files[0]; if (!f) return toast("バックアップファイルを選択してください", true); raw = await f.text(); }
+    if (!raw) return toast("バックアップの文字を貼り付けてください", true);
+    let d; try { d = JSON.parse(raw); if (d.app !== "receipt-local" || !Array.isArray(d.customers)) throw 0; } catch (e) { return toast("このアプリのバックアップではありません（文字が途中で切れていないか確認してください）", true); }
     if (mode === "replace") { if (!confirm(`現在の${live().length}件をすべて消して、バックアップの${d.customers.length}件に置き換えます。よろしいですか？`)) return; await db.clearAll(); await db.putMany(d.customers); }
     else { const have = new Set(LIST.map((c) => c.createdAt + "|" + c.call)); const add = d.customers.filter((c) => !have.has(c.createdAt + "|" + c.call)).map(({ id, ...c }) => c); await db.putMany(add); toast(`${add.length}件を追加しました`); }
     await reload(); render(); toast("読み込みました");
@@ -231,8 +260,10 @@ async function settingsView() {
   shell(h("h3", {}, "設定・バックアップ"),
     h("div", { class: "card" }, h("b", {}, "バックアップ"), h("div", { class: "mute" }, last ? `最終: ${new Date(last).toLocaleString("ja-JP")}` : "まだ書き出していません"),
       h("p", { class: "mute" }, "データはこのスマホのブラウザ内にだけあります。ブラウザのデータ削除・機種変更・長期間未使用で消えることがあるため、定期的に書き出してください。"),
-      h("div", { class: "row" }, h("button", { class: "btn", onclick: backup }, "バックアップを書き出す"), h("button", { class: "btn sub", onclick: csv }, "CSVで書き出す"))),
-    h("div", { class: "card" }, h("b", {}, "バックアップから戻す"), file, h("div", { class: "row" }, h("button", { class: "btn sub sm", onclick: () => restore("merge") }, "追加で読み込む"), h("button", { class: "btn bad sm", onclick: () => restore("replace") }, "置き換えて読み込む"))),
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: backup }, "ファイルで書き出す"), h("button", { class: "btn", onclick: copyBackup }, "文字でコピー"), h("button", { class: "btn sub", onclick: csv }, "CSVで書き出す")),
+      h("div", { class: "mute" }, "「文字でコピー」→ メモアプリなどに貼り付けて保管すると、ファイル保存が難しい端末でも安全です。")),
+    h("div", { class: "card" }, h("b", {}, "バックアップから戻す"), h("label", {}, "ファイルから"), file, h("div", { class: "row" }, h("button", { class: "btn sub sm", onclick: () => restore("merge") }, "追加で読み込む"), h("button", { class: "btn bad sm", onclick: () => restore("replace") }, "置き換えて読み込む")),
+      h("hr"), h("label", {}, "コピーした文字から"), tbox, h("div", { class: "row" }, pasteBtn(tbox), h("button", { class: "btn sub sm", onclick: () => restore("merge", true) }, "追加で読み込む"), h("button", { class: "btn bad sm", onclick: () => restore("replace", true) }, "置き換えて読み込む"))),
     h("div", { class: "card" }, h("b", {}, "データの保護"), h("div", { class: "mute" }, persisted === null ? "この端末は保存保護の状態を確認できません" : persisted ? "保存保護: オン（自動で消されにくい状態）" : "保存保護: オフ"),
       persisted === false ? h("button", { class: "btn sub sm", onclick: async () => { const ok = await navigator.storage.persist(); toast(ok ? "保存保護をオンにしました" : "許可されませんでした。ホーム画面に追加すると安定します", !ok); render(); } }, "保存保護をリクエスト") : null,
       h("p", { class: "mute" }, "iPhoneは、ホーム画面に追加して使うと、保存データが消えにくくなります（共有ボタン → ホーム画面に追加）。")),
